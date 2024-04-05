@@ -21,6 +21,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("day phase voice channel category is empty")
 	case c.TownSquare == "":
 		return fmt.Errorf("town square voice channel name is empty")
+	case c.MovementDeadlineSeconds <= 0:
+		return fmt.Errorf("invalid deadline %d (must be >0) for movement operations", c.MovementDeadlineSeconds)
 	}
 
 	return nil
