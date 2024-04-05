@@ -3,11 +3,12 @@ package mover
 import "fmt"
 
 type Config struct {
-	Tokens             []string
-	NightPhaseCategory string
-	DayPhaseCategory   string
-	TownSquare         string
-	StoryTellerRole    string
+	Tokens                  []string
+	NightPhaseCategory      string
+	DayPhaseCategory        string
+	TownSquare              string
+	StoryTellerRole         string
+	MovementDeadlineSeconds int
 }
 
 func (c *Config) Validate() error {

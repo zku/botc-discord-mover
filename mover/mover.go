@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -14,10 +16,11 @@ import (
 type Mover struct {
 	cfg      *Config
 	sessions []*discordgo.Session
+	ch       chan (*movementPlan)
 }
 
 func New(cfg *Config) *Mover {
-	return &Mover{cfg: cfg}
+	return &Mover{cfg: cfg, ch: make(chan (*movementPlan))}
 }
 
 const (
@@ -52,13 +55,17 @@ func (m *Mover) onSlashCommand(s *discordgo.Session, i *discordgo.InteractionCre
 					Components: []discordgo.MessageComponent{
 						discordgo.Button{
 							Emoji:    &discordgo.ComponentEmoji{Name: "☀️"},
-							Label:    "Day Time: Move to Town Square",
+							Label:    "Day: Return to Town Square",
 							CustomID: buttonDay,
 							Style:    discordgo.PrimaryButton,
 						},
+					},
+				},
+				discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
 						discordgo.Button{
 							Emoji:    &discordgo.ComponentEmoji{Name: "🌑"},
-							Label:    "Night Time: Move to Cottages",
+							Label:    "Night: Send all to Cottages",
 							CustomID: buttonNight,
 							Style:    discordgo.DangerButton,
 						},
@@ -71,13 +78,32 @@ func (m *Mover) onSlashCommand(s *discordgo.Session, i *discordgo.InteractionCre
 	return nil
 }
 
-func (m *Mover) prepareNightMoves(s *discordgo.Session, i *discordgo.InteractionCreate) error {
-	log.Println("Moving to night.")
+type discordVoiceState struct {
+	guild            *discordgo.Guild
+	userToVoiceState map[string]*discordgo.VoiceState
+	members          []*discordgo.Member
+	townSquare       *discordgo.Channel
+	cottages         []*discordgo.Channel
+}
 
-	// List all night voice channels (cottages) -- can we verify they are private?
-	channels, err := s.GuildChannels(i.GuildID)
+type movementPlan struct {
+	s     *discordgo.Session
+	moves map[string]string
+	guild string
+}
+
+func (p *movementPlan) String() string {
+	var parts []string
+	for user, channel := range p.moves {
+		parts = append(parts, fmt.Sprintf("[Move user %s to channel %s]", user, channel))
+	}
+	return fmt.Sprintf("Moving members of guild %s: %s", p.guild, strings.Join(parts, ", "))
+}
+
+func (m *Mover) buildDiscordVoiceState(s *discordgo.Session, guildID string) (*discordVoiceState, error) {
+	channels, err := s.GuildChannels(guildID)
 	if err != nil {
-		return fmt.Errorf("cannot list guild channels: %w", err)
+		return nil, fmt.Errorf("cannot list guild channels: %w", err)
 	}
 
 	var dayCategoryChannel, nightCategoryChannel, townSquareChannel *discordgo.Channel
@@ -93,92 +119,159 @@ func (m *Mover) prepareNightMoves(s *discordgo.Session, i *discordgo.Interaction
 	}
 
 	if dayCategoryChannel == nil {
-		return fmt.Errorf("cannot find day category %q", m.cfg.DayPhaseCategory)
+		return nil, fmt.Errorf("cannot find day category %q", m.cfg.DayPhaseCategory)
 	}
 	if nightCategoryChannel == nil {
-		return fmt.Errorf("cannot find night category %q", m.cfg.NightPhaseCategory)
+		return nil, fmt.Errorf("cannot find night category %q", m.cfg.NightPhaseCategory)
 	}
 	if townSquareChannel == nil {
-		return fmt.Errorf("cannot find Town Square %q", m.cfg.TownSquare)
+		return nil, fmt.Errorf("cannot find Town Square %q", m.cfg.TownSquare)
+	}
+	if townSquareChannel.ParentID != dayCategoryChannel.ID {
+		return nil, fmt.Errorf("town square is not under day phase")
 	}
 
 	var nightCottages []*discordgo.Channel
-	nightCottageChannelIDs := make(map[string]bool)
 	for _, channel := range channels {
 		if channel.Type == discordgo.ChannelTypeGuildVoice && channel.ParentID == nightCategoryChannel.ID {
 			nightCottages = append(nightCottages, channel)
-			nightCottageChannelIDs[channel.ID] = true
 		}
 	}
 
-	log.Printf("Found all relevant channels and %d cottages.", len(nightCottages))
-
-	// List all users in all voice channels.
-	guild, err := s.State.Guild(i.GuildID)
+	guild, err := s.State.Guild(guildID)
 	if err != nil {
-		return fmt.Errorf("cannot fetch guild state: %w", err)
+		return nil, fmt.Errorf("cannot fetch guild state: %w", err)
 	}
 	userToVoiceState := make(map[string]*discordgo.VoiceState)
 	for _, vs := range guild.VoiceStates {
 		userToVoiceState[vs.UserID] = vs
 	}
-	members, err := s.GuildMembers(i.GuildID, "", 1000)
+	members, err := s.GuildMembers(guildID, "", 1000)
 	if err != nil {
-		return fmt.Errorf("cannot list guild members: %w", err)
+		return nil, fmt.Errorf("cannot list guild members: %w", err)
+	}
+
+	return &discordVoiceState{
+		guild:            guild,
+		userToVoiceState: userToVoiceState,
+		members:          members,
+		townSquare:       townSquareChannel,
+		cottages:         nightCottages,
+	}, nil
+}
+
+func (m *Mover) prepareNightMoves(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+	log.Println("Moving to night.")
+
+	vs, err := m.buildDiscordVoiceState(s, i.GuildID)
+	if err != nil {
+		return fmt.Errorf("cannot build voice state: %w", err)
+	}
+
+	log.Printf("Found all relevant channels and %d cottages for the night phase.", len(vs.cottages))
+
+	nightCottageChannelIDs := make(map[string]bool)
+	for _, cottage := range vs.cottages {
+		nightCottageChannelIDs[cottage.ID] = true
 	}
 
 	// Anyone who isn't already in a private night time cottage needs to move.
 	fullCottageIDs := make(map[string]bool)
-	userToVoiceChannelMap := make(map[string]string)
 	var userNeedsMove []string
-	for _, member := range members {
-		state := userToVoiceState[member.User.ID]
-		if state != nil && state.ChannelID != "" {
+	for _, member := range vs.members {
+		userVoiceState := vs.userToVoiceState[member.User.ID]
+		if userVoiceState != nil && userVoiceState.ChannelID != "" {
 			// This member is in a voice channel.
-			userToVoiceChannelMap[member.User.ID] = state.ChannelID
 			// If they are in a cottage, we have to mark it as full already. (Should rarely happen?)
-			if nightCottageChannelIDs[state.ChannelID] {
-				fullCottageIDs[state.ChannelID] = true
+			if nightCottageChannelIDs[userVoiceState.ChannelID] {
+				fullCottageIDs[userVoiceState.ChannelID] = true
 			} else {
+				// Otherwise, they need to move.
 				userNeedsMove = append(userNeedsMove, member.User.ID)
 			}
 		}
 	}
 
-	log.Printf("User to voice channel map: %+v", userToVoiceChannelMap)
-	log.Printf("full cottage IDs: %+v", fullCottageIDs)
-	log.Printf("Users need move to cottage: %+v", userNeedsMove)
+	if len(userNeedsMove) > len(nightCottageChannelIDs)-len(fullCottageIDs) {
+		return fmt.Errorf("not enough cottages available, need %d user movements but only have %d empty cottages", len(userNeedsMove), len(nightCottageChannelIDs)-len(fullCottageIDs))
+	}
 
 	// Build the movement plan.
-	movementPlan := make(map[string]string)
+	plan := make(map[string]string)
 	for _, user := range userNeedsMove {
-		for _, cottage := range nightCottages {
+		for _, cottage := range vs.cottages {
 			if fullCottageIDs[cottage.ID] {
-				continue // this cottage is already full
+				continue // This cottage is already full.
 			}
-			movementPlan[user] = cottage.ID
-			// Mark as full.
+			plan[user] = cottage.ID
 			fullCottageIDs[cottage.ID] = true
 		}
 	}
 
-	log.Printf("Movement plan: %+v", movementPlan)
+	select {
+	case m.ch <- &movementPlan{s: s, moves: plan, guild: i.GuildID}:
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+			Data: &discordgo.InteractionResponseData{
+				Flags: discordgo.MessageFlagsEphemeral,
+			},
+		})
+	default:
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Flags:   discordgo.MessageFlagsEphemeral,
+				Content: "Another movement is already in progress, please wait.",
+			},
+		})
+		return fmt.Errorf("cannot push movement plan to queue, busy")
+	}
 
-	// ensure number of cottages > number of users to move
-	// create a movement plan, user to cottage (1 per)
-	// execute the plan
-
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredMessageUpdate,
-	})
 	return nil
 }
 
 func (m *Mover) prepareDayMoves(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	log.Println("Moving to day.")
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredMessageUpdate,
-	})
+
+	vs, err := m.buildDiscordVoiceState(s, i.GuildID)
+	if err != nil {
+		return fmt.Errorf("cannot build voice state: %w", err)
+	}
+
+	log.Printf("Found all relevant channels for the day phase.")
+
+	// Anyone who isn't already in Town Square needs to move.
+	plan := make(map[string]string)
+	for _, member := range vs.members {
+		userVoiceState := vs.userToVoiceState[member.User.ID]
+		if userVoiceState != nil && userVoiceState.ChannelID != "" {
+			// This member is in a voice channel.
+			// If they are not in Town Square, they need to move.
+			if userVoiceState.ChannelID != vs.townSquare.ID {
+				plan[member.User.ID] = vs.townSquare.ID
+			}
+		}
+	}
+
+	select {
+	case m.ch <- &movementPlan{s: s, moves: plan, guild: i.GuildID}:
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+			Data: &discordgo.InteractionResponseData{
+				Flags: discordgo.MessageFlagsEphemeral,
+			},
+		})
+	default:
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Flags:   discordgo.MessageFlagsEphemeral,
+				Content: "Another movement is already in progress, please wait.",
+			},
+		})
+		return fmt.Errorf("cannot push movement plan to queue, busy")
+	}
+
 	return nil
 }
 
@@ -206,6 +299,37 @@ func (m *Mover) checkUserIsStoryTeller(s *discordgo.Session, i *discordgo.Intera
 	}
 
 	return fmt.Errorf("user %v is not a story teller", i.Member.DisplayName())
+}
+
+func (m *Mover) executeMovementPlan(plan *movementPlan) error {
+	finishedMoves := make(map[string]bool)
+
+	for deadline := time.Now().Add(time.Duration(m.cfg.MovementDeadlineSeconds) * time.Second); time.Now().Before(deadline); {
+		for user, channel := range plan.moves {
+			if finishedMoves[user] {
+				continue
+			}
+			if err := plan.s.GuildMemberMove(plan.guild, user, &channel); err != nil {
+				return err
+			}
+			finishedMoves[user] = true
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		if len(finishedMoves) == len(plan.moves) {
+			log.Println("Successfully finished executing movement plan.")
+			return nil
+		}
+	}
+
+	return fmt.Errorf("movement plan deadline exceeded, finished %d of %d moves", len(finishedMoves), len(plan.moves))
+}
+
+func (m *Mover) handleMovementPlans() {
+	for plan := range m.ch {
+		log.Printf("Received new movement plan: %v", plan)
+		m.executeMovementPlan(plan)
+	}
 }
 
 func (m *Mover) RunForever(ctx context.Context) error {
@@ -236,6 +360,9 @@ func (m *Mover) RunForever(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("cannot create application command: %w", err)
 	}
+
+	defer close(m.ch)
+	go m.handleMovementPlans()
 
 	// Listen for commands.
 	m.sessions[0].AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
