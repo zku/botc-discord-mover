@@ -7,6 +7,7 @@ type Config struct {
 	NightPhaseCategory string
 	DayPhaseCategory   string
 	TownSquare         string
+	StoryTellerRole    string
 }
 
 func (c *Config) Validate() error {
