@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"io/ioutil"
@@ -30,7 +29,7 @@ func main() {
 	}
 
 	m := mover.New(cfg)
-	if err := m.RunForever(context.Background()); err != nil {
+	if err := m.RunForever(); err != nil {
 		log.Fatalf("Mover terminated: %v", err)
 	}
 }

@@ -35,12 +35,12 @@ const (
 )
 
 // onButtonPressed handles the 2 button presses for day/night phase movements.
-func (m *Mover) onButtonPressed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+func (m *Mover) onButtonPressed(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	switch i.MessageComponentData().CustomID {
 	case buttonNight:
-		return m.prepareNightMoves(s, i)
+		return m.prepareNightMoves(ctx, s, i)
 	case buttonDay:
-		return m.prepareDayMoves(s, i)
+		return m.prepareDayMoves(ctx, s, i)
 	}
 
 	return fmt.Errorf("unknown button pressed: %#v", i.MessageComponentData())
@@ -52,7 +52,7 @@ const (
 )
 
 // onSlashCommand handles the /buttons slash command and responds with the 2 button embeds.
-func (m *Mover) onSlashCommand(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+func (m *Mover) onSlashCommand(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	data := i.ApplicationCommandData()
 	if data.Name != slashCommandButtons {
 		return fmt.Errorf("unknown slash command: %s", data.Name)
@@ -84,7 +84,7 @@ func (m *Mover) onSlashCommand(s *discordgo.Session, i *discordgo.InteractionCre
 				},
 			},
 		},
-	})
+	}, discordgo.WithContext(ctx))
 
 	return nil
 }
@@ -101,8 +101,8 @@ type discordVoiceState struct {
 
 // buildDiscordVoiceState returns information about all mandatory voice channels and members in
 // voice channels.
-func (m *Mover) buildDiscordVoiceState(s *discordgo.Session, guildID string) (*discordVoiceState, error) {
-	channels, err := s.GuildChannels(guildID)
+func (m *Mover) buildDiscordVoiceState(ctx context.Context, s *discordgo.Session, guildID string) (*discordVoiceState, error) {
+	channels, err := s.GuildChannels(guildID, discordgo.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("cannot list guild channels: %w", err)
 	}
@@ -153,7 +153,7 @@ func (m *Mover) buildDiscordVoiceState(s *discordgo.Session, guildID string) (*d
 	for _, vs := range guild.VoiceStates {
 		userToVoiceState[vs.UserID] = vs
 	}
-	members, err := s.GuildMembers(guildID, "", 1000)
+	members, err := s.GuildMembers(guildID, "", 1000, discordgo.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("cannot list guild members: %w", err)
 	}
@@ -180,10 +180,10 @@ func forwardInteractionError(s *discordgo.Session, i *discordgo.InteractionCreat
 }
 
 // prepareNightMoves prepares all necessary moves for the night phase and dispatches the plan.
-func (m *Mover) prepareNightMoves(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+func (m *Mover) prepareNightMoves(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	log.Println("Moving to night.")
 
-	vs, err := m.buildDiscordVoiceState(s, i.GuildID)
+	vs, err := m.buildDiscordVoiceState(ctx, s, i.GuildID)
 	if err != nil {
 		return fmt.Errorf("cannot build voice state: %w", err)
 	}
@@ -235,17 +235,17 @@ func (m *Mover) prepareNightMoves(s *discordgo.Session, i *discordgo.Interaction
 			Data: &discordgo.InteractionResponseData{
 				Flags: discordgo.MessageFlagsEphemeral,
 			},
-		})
+		}, discordgo.WithContext(ctx))
 	default:
 		return fmt.Errorf("existing player movement has not finished yet, please wait")
 	}
 }
 
 // prepareDayMoves prepares all necessary moves for the day phase and dispatches the plan.
-func (m *Mover) prepareDayMoves(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+func (m *Mover) prepareDayMoves(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	log.Println("Moving to day.")
 
-	vs, err := m.buildDiscordVoiceState(s, i.GuildID)
+	vs, err := m.buildDiscordVoiceState(ctx, s, i.GuildID)
 	if err != nil {
 		return fmt.Errorf("cannot build voice state: %w", err)
 	}
@@ -272,7 +272,7 @@ func (m *Mover) prepareDayMoves(s *discordgo.Session, i *discordgo.InteractionCr
 			Data: &discordgo.InteractionResponseData{
 				Flags: discordgo.MessageFlagsEphemeral,
 			},
-		})
+		}, discordgo.WithContext(ctx))
 	default:
 		return fmt.Errorf("existing player movement has not finished yet, please wait")
 	}
@@ -280,13 +280,13 @@ func (m *Mover) prepareDayMoves(s *discordgo.Session, i *discordgo.InteractionCr
 
 // checkUserIsStoryTeller returns an error iff the interaction user is not a story teller or if the
 // command was not invoked in a guild channel.
-func (m *Mover) checkUserIsStoryTeller(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+func (m *Mover) checkUserIsStoryTeller(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	if i.Member == nil {
 		return fmt.Errorf("action not invoked from guild channel")
 	}
 
 	// Fetch all guild roles.
-	allRoles, err := s.GuildRoles(i.GuildID)
+	allRoles, err := s.GuildRoles(i.GuildID, discordgo.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("cannot fetch guild roles: %w", err)
 	}
@@ -316,31 +316,37 @@ var moveAttempts int64
 func (m *Mover) executeMovementPlan(plan *movementPlan) error {
 	finishedMoves := make(map[string]bool)
 
-	for deadline := time.Now().Add(time.Duration(m.cfg.MovementDeadlineSeconds) * time.Second); time.Now().Before(deadline); {
-		for user, channel := range plan.moves {
-			if finishedMoves[user] {
-				continue
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.cfg.MovementDeadlineSeconds)*time.Second)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			for user, channel := range plan.moves {
+				if finishedMoves[user] {
+					continue
+				}
+
+				counter := int(atomic.LoadInt64(&moveAttempts))
+				session := m.sessions[counter%len(m.sessions)]
+				log.Printf("Using session %s (overall movement attempt %d) to move %s to %s.", session.State.User.Username, counter, user, channel)
+				if err := session.GuildMemberMove(plan.guild, user, &channel, discordgo.WithContext(ctx)); err != nil {
+					return err
+				}
+
+				atomic.AddInt64(&moveAttempts, 1)
+				finishedMoves[user] = true
+				time.Sleep(50 * time.Millisecond)
 			}
 
-			counter := int(atomic.LoadInt64(&moveAttempts))
-			session := m.sessions[counter%len(m.sessions)]
-			log.Printf("Using session %s (overall movement attempt %d) to move %s to %s.", session.State.User.Username, counter, user, channel)
-			if err := session.GuildMemberMove(plan.guild, user, &channel); err != nil {
-				return err
+			if len(finishedMoves) == len(plan.moves) {
+				log.Println("Successfully finished executing movement plan.")
+				return nil
 			}
-
-			atomic.AddInt64(&moveAttempts, 1)
-			finishedMoves[user] = true
-			time.Sleep(50 * time.Millisecond)
-		}
-
-		if len(finishedMoves) == len(plan.moves) {
-			log.Println("Successfully finished executing movement plan.")
-			return nil
 		}
 	}
-
-	return fmt.Errorf("movement plan deadline exceeded, finished %d of %d moves", len(finishedMoves), len(plan.moves))
 }
 
 // handleMovementPlans listens for and handles new movement plans. Only one plan can be executed
@@ -348,13 +354,15 @@ func (m *Mover) executeMovementPlan(plan *movementPlan) error {
 func (m *Mover) handleMovementPlans() {
 	for plan := range m.ch {
 		log.Printf("Received new movement plan: %v", plan)
-		m.executeMovementPlan(plan)
+		if err := m.executeMovementPlan(plan); err != nil {
+			log.Printf("Executing movement plan failed: %v", err)
+		}
 	}
 }
 
 // RunForever establishes all bot sessions and listens for commands until the program is
 // terminated.
-func (m *Mover) RunForever(ctx context.Context) error {
+func (m *Mover) RunForever() error {
 	// Establish all bot sessions.
 	for _, token := range m.cfg.Tokens {
 		dg, err := discordgo.New("Bot " + token)
@@ -388,7 +396,10 @@ func (m *Mover) RunForever(ctx context.Context) error {
 
 	// Listen for commands.
 	m.sessions[0].AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		if err := m.checkUserIsStoryTeller(s, i); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.cfg.PerRequestSeconds)*time.Second)
+		defer cancel()
+
+		if err := m.checkUserIsStoryTeller(ctx, s, i); err != nil {
 			log.Printf("Invalid user: %v", err)
 			return
 		}
@@ -398,13 +409,13 @@ func (m *Mover) RunForever(ctx context.Context) error {
 		switch i.Type {
 		case discordgo.InteractionMessageComponent:
 			// Handle button press.
-			if err := m.onButtonPressed(s, i); err != nil {
+			if err := m.onButtonPressed(ctx, s, i); err != nil {
 				forwardInteractionError(s, i, err)
 				return
 			}
 		case discordgo.InteractionApplicationCommand:
 			// Handle slash command.
-			if err := m.onSlashCommand(s, i); err != nil {
+			if err := m.onSlashCommand(ctx, s, i); err != nil {
 				forwardInteractionError(s, i, err)
 				return
 			}

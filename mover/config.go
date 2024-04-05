@@ -14,7 +14,8 @@ import "fmt"
   "DayPhaseCategory": "Day Phase",
   "TownSquare": "Town Square",
   "StoryTellerRole": "Storyteller",
-  "MovementDeadlineSeconds": 15
+  "MovementDeadlineSeconds": 15,
+	"PerRequestSeconds": 5
 }
 */
 type Config struct {
@@ -24,6 +25,7 @@ type Config struct {
 	TownSquare              string
 	StoryTellerRole         string
 	MovementDeadlineSeconds int
+	PerRequestSeconds       int
 }
 
 func (c *Config) Validate() error {
@@ -38,6 +40,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("town square voice channel name is empty")
 	case c.MovementDeadlineSeconds <= 0:
 		return fmt.Errorf("invalid deadline %d (must be >0) for movement operations", c.MovementDeadlineSeconds)
+	case c.PerRequestSeconds <= 0:
+		return fmt.Errorf("invalid deadline %d (must be >0) for requests", c.PerRequestSeconds)
 	}
 
 	return nil
