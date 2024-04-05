@@ -94,10 +94,15 @@ type movementPlan struct {
 }
 
 func (p *movementPlan) String() string {
+	if len(p.moves) == 0 {
+		return fmt.Sprintf("No movements required for guild %s", p.guild)
+	}
+
 	var parts []string
 	for user, channel := range p.moves {
 		parts = append(parts, fmt.Sprintf("[Move user %s to channel %s]", user, channel))
 	}
+
 	return fmt.Sprintf("Moving members of guild %s: %s", p.guild, strings.Join(parts, ", "))
 }
 
