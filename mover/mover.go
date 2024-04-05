@@ -144,6 +144,11 @@ func (m *Mover) buildDiscordVoiceState(s *discordgo.Session, guildID string) (*d
 		}
 	}
 
+	// Reverse the cottage order so we populate the top-most ones.
+	for i, j := 0, len(nightCottages)-1; i < j; i, j = i+1, j-1 {
+		nightCottages[i], nightCottages[j] = nightCottages[j], nightCottages[i]
+	}
+
 	guild, err := s.State.Guild(guildID)
 	if err != nil {
 		return nil, fmt.Errorf("cannot fetch guild state: %w", err)
