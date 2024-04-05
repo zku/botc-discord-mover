@@ -2,6 +2,21 @@ package mover
 
 import "fmt"
 
+// Config for the mover.
+// Example config file:
+/*
+{
+  "Tokens": [
+		"<token 1>",
+		"<token 2>"
+  ],
+  "NightPhaseCategory": "Night Phase",
+  "DayPhaseCategory": "Day Phase",
+  "TownSquare": "Town Square",
+  "StoryTellerRole": "Storyteller",
+  "MovementDeadlineSeconds": 15
+}
+*/
 type Config struct {
 	Tokens                  []string
 	NightPhaseCategory      string
