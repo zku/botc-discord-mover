@@ -7,30 +7,34 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
 
+// Mover is a BotC multi-bot voice channel mover.
 type Mover struct {
 	cfg      *Config
 	sessions []*discordgo.Session
 	ch       chan (*movementPlan)
 }
 
+// New creates a new BotC multi-bot voice channel mover.
+// Supports moving users to individual cottages (night phases) and to Town Square (day phase).
+// Actions are load-balanced across all configured bots in an attempt to reduce Discord
+// throttling issues for large games (>10 players).
 func New(cfg *Config) *Mover {
 	return &Mover{cfg: cfg, ch: make(chan (*movementPlan))}
 }
 
+// Button IDs.
 const (
 	buttonNight = "buttonNight"
 	buttonDay   = "buttonDay"
-
-	slashCommandButtons = "buttons"
 )
 
+// onButtonPressed handles the 2 button presses for day/night phase movements.
 func (m *Mover) onButtonPressed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	switch i.MessageComponentData().CustomID {
 	case buttonNight:
@@ -42,6 +46,12 @@ func (m *Mover) onButtonPressed(s *discordgo.Session, i *discordgo.InteractionCr
 	return fmt.Errorf("unknown button pressed: %#v", i.MessageComponentData())
 }
 
+// Slash command IDs.
+const (
+	slashCommandButtons = "buttons"
+)
+
+// onSlashCommand handles the /buttons slash command and responds with the 2 button embeds.
 func (m *Mover) onSlashCommand(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	data := i.ApplicationCommandData()
 	if data.Name != slashCommandButtons {
@@ -79,6 +89,8 @@ func (m *Mover) onSlashCommand(s *discordgo.Session, i *discordgo.InteractionCre
 	return nil
 }
 
+// discordVoiceState contains all required discord guild and voice state information to perform
+// day or night moves.
 type discordVoiceState struct {
 	guild            *discordgo.Guild
 	userToVoiceState map[string]*discordgo.VoiceState
@@ -87,25 +99,8 @@ type discordVoiceState struct {
 	cottages         []*discordgo.Channel
 }
 
-type movementPlan struct {
-	s     *discordgo.Session
-	moves map[string]string
-	guild string
-}
-
-func (p *movementPlan) String() string {
-	if len(p.moves) == 0 {
-		return fmt.Sprintf("No movements required for guild %s", p.guild)
-	}
-
-	var parts []string
-	for user, channel := range p.moves {
-		parts = append(parts, fmt.Sprintf("[Move user %s to channel %s]", user, channel))
-	}
-
-	return fmt.Sprintf("Moving members of guild %s: %s", p.guild, strings.Join(parts, ", "))
-}
-
+// buildDiscordVoiceState returns information about all mandatory voice channels and members in
+// voice channels.
 func (m *Mover) buildDiscordVoiceState(s *discordgo.Session, guildID string) (*discordVoiceState, error) {
 	channels, err := s.GuildChannels(guildID)
 	if err != nil {
@@ -137,16 +132,17 @@ func (m *Mover) buildDiscordVoiceState(s *discordgo.Session, guildID string) (*d
 		return nil, fmt.Errorf("town square is not under day phase")
 	}
 
-	var nightCottages []*discordgo.Channel
+	var cottages []*discordgo.Channel
 	for _, channel := range channels {
 		if channel.Type == discordgo.ChannelTypeGuildVoice && channel.ParentID == nightCategoryChannel.ID {
-			nightCottages = append(nightCottages, channel)
+			cottages = append(cottages, channel)
 		}
 	}
 
-	// Reverse the cottage order so we populate the top-most ones.
-	for i, j := 0, len(nightCottages)-1; i < j; i, j = i+1, j-1 {
-		nightCottages[i], nightCottages[j] = nightCottages[j], nightCottages[i]
+	// Reverse the cottage order so we populate the top-most ones. This will make it easier for the
+	// storyteller to see all the populated cottages.
+	for i, j := 0, len(cottages)-1; i < j; i, j = i+1, j-1 {
+		cottages[i], cottages[j] = cottages[j], cottages[i]
 	}
 
 	guild, err := s.State.Guild(guildID)
@@ -162,17 +158,28 @@ func (m *Mover) buildDiscordVoiceState(s *discordgo.Session, guildID string) (*d
 		return nil, fmt.Errorf("cannot list guild members: %w", err)
 	}
 
-	// TODO: should we randomize member and voice channel order?
-
 	return &discordVoiceState{
 		guild:            guild,
 		userToVoiceState: userToVoiceState,
 		members:          members,
 		townSquare:       townSquareChannel,
-		cottages:         nightCottages,
+		cottages:         cottages,
 	}, nil
 }
 
+// forwardInteractionError forwards the interaction error to the button embed.
+func forwardInteractionError(s *discordgo.Session, i *discordgo.InteractionCreate, err error) {
+	log.Printf("Interaction error: %v", err)
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Flags:   discordgo.MessageFlagsEphemeral,
+			Content: fmt.Sprintf("Interaction error: %v", err),
+		},
+	})
+}
+
+// prepareNightMoves prepares all necessary moves for the night phase and dispatches the plan.
 func (m *Mover) prepareNightMoves(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	log.Println("Moving to night.")
 
@@ -222,27 +229,19 @@ func (m *Mover) prepareNightMoves(s *discordgo.Session, i *discordgo.Interaction
 	}
 
 	select {
-	case m.ch <- &movementPlan{s: s, moves: plan, guild: i.GuildID}:
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	case m.ch <- &movementPlan{moves: plan, guild: i.GuildID}:
+		return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseDeferredMessageUpdate,
 			Data: &discordgo.InteractionResponseData{
 				Flags: discordgo.MessageFlagsEphemeral,
 			},
 		})
 	default:
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Flags:   discordgo.MessageFlagsEphemeral,
-				Content: "Another movement is already in progress, please wait.",
-			},
-		})
-		return fmt.Errorf("cannot push movement plan to queue, busy")
+		return fmt.Errorf("existing player movement has not finished yet, please wait")
 	}
-
-	return nil
 }
 
+// prepareDayMoves prepares all necessary moves for the day phase and dispatches the plan.
 func (m *Mover) prepareDayMoves(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	log.Println("Moving to day.")
 
@@ -267,27 +266,20 @@ func (m *Mover) prepareDayMoves(s *discordgo.Session, i *discordgo.InteractionCr
 	}
 
 	select {
-	case m.ch <- &movementPlan{s: s, moves: plan, guild: i.GuildID}:
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	case m.ch <- &movementPlan{moves: plan, guild: i.GuildID}:
+		return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseDeferredMessageUpdate,
 			Data: &discordgo.InteractionResponseData{
 				Flags: discordgo.MessageFlagsEphemeral,
 			},
 		})
 	default:
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Flags:   discordgo.MessageFlagsEphemeral,
-				Content: "Another movement is already in progress, please wait.",
-			},
-		})
-		return fmt.Errorf("cannot push movement plan to queue, busy")
+		return fmt.Errorf("existing player movement has not finished yet, please wait")
 	}
-
-	return nil
 }
 
+// checkUserIsStoryTeller returns an error iff the interaction user is not a story teller or if the
+// command was not invoked in a guild channel.
 func (m *Mover) checkUserIsStoryTeller(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	if i.Member == nil {
 		return fmt.Errorf("action not invoked from guild channel")
@@ -314,8 +306,13 @@ func (m *Mover) checkUserIsStoryTeller(s *discordgo.Session, i *discordgo.Intera
 	return fmt.Errorf("user %v (%v) is not a story teller", i.Member.User.Username, i.Member.DisplayName())
 }
 
+// moveAttempts counts all attempted movements. This value is used to load-balance between
+// all the bot sessions.
 var moveAttempts int64
 
+// executeMovementPlan executes all movements required to enter a new phase.
+// Movements are load-balanced across all configured bots.
+// The whole phase transition must not take longer than the configured MovementDeadlineSeconds.
 func (m *Mover) executeMovementPlan(plan *movementPlan) error {
 	finishedMoves := make(map[string]bool)
 
@@ -346,6 +343,8 @@ func (m *Mover) executeMovementPlan(plan *movementPlan) error {
 	return fmt.Errorf("movement plan deadline exceeded, finished %d of %d moves", len(finishedMoves), len(plan.moves))
 }
 
+// handleMovementPlans listens for and handles new movement plans. Only one plan can be executed
+// at once.
 func (m *Mover) handleMovementPlans() {
 	for plan := range m.ch {
 		log.Printf("Received new movement plan: %v", plan)
@@ -353,6 +352,8 @@ func (m *Mover) handleMovementPlans() {
 	}
 }
 
+// RunForever establishes all bot sessions and listens for commands until the program is
+// terminated.
 func (m *Mover) RunForever(ctx context.Context) error {
 	// Establish all bot sessions.
 	for _, token := range m.cfg.Tokens {
@@ -392,19 +393,19 @@ func (m *Mover) RunForever(ctx context.Context) error {
 			return
 		}
 
-		log.Printf("Received command from %s (%s).", i.Member.User.Username, i.Member.DisplayName())
+		log.Printf("Received command from %s (%s) for guild %s.", i.Member.User.Username, i.Member.DisplayName(), i.GuildID)
 
 		switch i.Type {
 		case discordgo.InteractionMessageComponent:
 			// Handle button press.
 			if err := m.onButtonPressed(s, i); err != nil {
-				log.Printf("Cannot handle button press: %v", err)
+				forwardInteractionError(s, i, err)
 				return
 			}
 		case discordgo.InteractionApplicationCommand:
 			// Handle slash command.
 			if err := m.onSlashCommand(s, i); err != nil {
-				log.Printf("Cannot handle slash command: %v", err)
+				forwardInteractionError(s, i, err)
 				return
 			}
 		}
