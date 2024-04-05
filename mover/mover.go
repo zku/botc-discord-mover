@@ -306,7 +306,7 @@ func (m *Mover) checkUserIsStoryTeller(s *discordgo.Session, i *discordgo.Intera
 		}
 	}
 
-	return fmt.Errorf("user %v is not a story teller", i.Member.DisplayName())
+	return fmt.Errorf("user %v (%v) is not a story teller", i.Member.User.Username, i.Member.DisplayName())
 }
 
 var moveAttempts int64
@@ -386,6 +386,8 @@ func (m *Mover) RunForever(ctx context.Context) error {
 			log.Printf("Invalid user: %v", err)
 			return
 		}
+
+		log.Printf("Received command from %s (%s).", i.Member.User.Username, i.Member.DisplayName())
 
 		switch i.Type {
 		case discordgo.InteractionMessageComponent:
