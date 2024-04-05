@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -150,6 +151,8 @@ func (m *Mover) buildDiscordVoiceState(s *discordgo.Session, guildID string) (*d
 	if err != nil {
 		return nil, fmt.Errorf("cannot list guild members: %w", err)
 	}
+
+	// TODO: should we randomize member and voice channel order?
 
 	return &discordVoiceState{
 		guild:            guild,
@@ -301,6 +304,8 @@ func (m *Mover) checkUserIsStoryTeller(s *discordgo.Session, i *discordgo.Intera
 	return fmt.Errorf("user %v is not a story teller", i.Member.DisplayName())
 }
 
+var moveAttempts int64
+
 func (m *Mover) executeMovementPlan(plan *movementPlan) error {
 	finishedMoves := make(map[string]bool)
 
@@ -309,9 +314,15 @@ func (m *Mover) executeMovementPlan(plan *movementPlan) error {
 			if finishedMoves[user] {
 				continue
 			}
-			if err := plan.s.GuildMemberMove(plan.guild, user, &channel); err != nil {
+
+			counter := int(atomic.LoadInt64(&moveAttempts))
+			session := m.sessions[counter%len(m.sessions)]
+			log.Printf("Using session %s (overall movement attempt %d) to move %s to %s.", session.State.User.Username, counter, user, channel)
+			if err := session.GuildMemberMove(plan.guild, user, &channel); err != nil {
 				return err
 			}
+
+			atomic.AddInt64(&moveAttempts, 1)
 			finishedMoves[user] = true
 			time.Sleep(50 * time.Millisecond)
 		}
