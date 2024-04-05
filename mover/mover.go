@@ -225,7 +225,12 @@ func (m *Mover) prepareNightMoves(ctx context.Context, s *discordgo.Session, i *
 			}
 			plan[user] = cottage.ID
 			fullCottageIDs[cottage.ID] = true
+			break
 		}
+	}
+
+	if len(plan) != len(userNeedsMove) {
+		return fmt.Errorf("could not find a move for every player, plan %d vs needed moves %d", len(plan), len(userNeedsMove))
 	}
 
 	select {
