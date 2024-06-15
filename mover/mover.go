@@ -319,6 +319,8 @@ func (m *Mover) handleMovementPlans() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(m.cfg.MovementDeadlineSeconds))
 		if err := plan.Execute(ctx, sp); err != nil {
 			log.Printf("Executing movement plan failed: %v", err)
+		} else {
+			log.Printf("Successfully finished movement plan.")
 		}
 		cancel()
 	}
