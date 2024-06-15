@@ -241,6 +241,8 @@ func (m *Mover) prepareNightMoves(ctx context.Context, s *discordgo.Session, i *
 			},
 		}, discordgo.WithContext(ctx))
 	default:
+		// NOTE: If we ever want to provide this bot as a service (vs self-hosted), we should allow
+		// concurrent movement plans (for different guild IDs).
 		return fmt.Errorf("existing player movement has not finished yet, please wait")
 	}
 }
