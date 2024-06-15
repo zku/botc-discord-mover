@@ -319,7 +319,7 @@ func (m *Mover) handleMovementPlans() {
 	for plan := range m.ch {
 		log.Printf("Received new movement plan: %v", plan)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(m.cfg.MovementDeadlineSeconds))
-		if err := plan.Execute(ctx, sp); err != nil {
+		if err := plan.Execute(ctx, m.cfg, sp); err != nil {
 			log.Printf("Executing movement plan failed: %v", err)
 		} else {
 			log.Printf("Successfully finished movement plan.")

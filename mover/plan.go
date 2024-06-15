@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	maxAsyncRequests   = 3
+	// TODO: Make configurable?
 	maxAttemptsPerUser = 2
 )
 
@@ -42,14 +42,14 @@ type sessionProvider interface {
 // Execute executes all movements required to enter a new phase.
 // Movements are load-balanced across all configured bots provided by the session provider.
 // The whole phase transition must not take longer than the configured MovementDeadlineSeconds.
-func (p *movementPlan) Execute(ctx context.Context, sp sessionProvider) error {
+func (p *movementPlan) Execute(ctx context.Context, cfg *Config, sp sessionProvider) error {
 	tasks := make(chan string, len(p.moves))
 	for user := range p.moves {
 		tasks <- user
 	}
 
 	results := make(chan error)
-	for i := 0; i < maxAsyncRequests; i++ {
+	for i := 0; i < cfg.MaxConcurrentRequests; i++ {
 		go func() {
 			for user := range tasks {
 				results <- executeSingleMove(ctx, p.guild, user, p.moves[user], sp)

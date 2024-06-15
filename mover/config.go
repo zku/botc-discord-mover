@@ -15,7 +15,8 @@ import "fmt"
   "TownSquare": "Town Square",
   "StoryTellerRole": "Storyteller",
   "MovementDeadlineSeconds": 15,
-  "PerRequestSeconds": 5
+  "PerRequestSeconds": 5,
+  "MaxConcurrentRequests": 1
 }
 */
 type Config struct {
@@ -26,6 +27,7 @@ type Config struct {
 	StoryTellerRole         string
 	MovementDeadlineSeconds int
 	PerRequestSeconds       int
+	MaxConcurrentRequests   int
 }
 
 func (c *Config) Validate() error {
@@ -42,6 +44,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid deadline %d (must be >0) for movement operations", c.MovementDeadlineSeconds)
 	case c.PerRequestSeconds <= 0:
 		return fmt.Errorf("invalid deadline %d (must be >0) for requests", c.PerRequestSeconds)
+	case c.MaxConcurrentRequests <= 0:
+		return fmt.Errorf("invalid max number of concurrent requests %d (must be >0) ", c.MaxConcurrentRequests)
 	}
 
 	return nil
