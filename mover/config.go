@@ -7,15 +7,15 @@ import "fmt"
 /*
 {
   "Tokens": [
-		"<token 1>",
-		"<token 2>"
+    "<token 1>",
+    "<token 2>"
   ],
   "NightPhaseCategory": "Night Phase",
   "DayPhaseCategory": "Day Phase",
   "TownSquare": "Town Square",
   "StoryTellerRole": "Storyteller",
   "MovementDeadlineSeconds": 15,
-	"PerRequestSeconds": 5
+  "PerRequestSeconds": 5
 }
 */
 type Config struct {
