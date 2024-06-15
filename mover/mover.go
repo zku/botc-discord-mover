@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync/atomic"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -311,57 +310,17 @@ func (m *Mover) checkUserIsStoryTeller(ctx context.Context, s *discordgo.Session
 	return fmt.Errorf("user %v (%v) is not a story teller", i.Member.User.Username, i.Member.DisplayName())
 }
 
-// moveAttempts counts all attempted movements. This value is used to load-balance between
-// all the bot sessions.
-var moveAttempts int64
-
-// executeMovementPlan executes all movements required to enter a new phase.
-// Movements are load-balanced across all configured bots.
-// The whole phase transition must not take longer than the configured MovementDeadlineSeconds.
-func (m *Mover) executeMovementPlan(plan *movementPlan) error {
-	finishedMoves := make(map[string]bool)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.cfg.MovementDeadlineSeconds)*time.Second)
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			for user, channel := range plan.moves {
-				if finishedMoves[user] {
-					continue
-				}
-
-				counter := int(atomic.LoadInt64(&moveAttempts))
-				session := m.sessions[counter%len(m.sessions)]
-				log.Printf("Using session %s (overall movement attempt %d) to move %s to %s.", session.State.User.Username, counter, user, channel)
-				if err := session.GuildMemberMove(plan.guild, user, &channel, discordgo.WithContext(ctx)); err != nil {
-					return err
-				}
-
-				atomic.AddInt64(&moveAttempts, 1)
-				finishedMoves[user] = true
-				time.Sleep(50 * time.Millisecond)
-			}
-
-			if len(finishedMoves) == len(plan.moves) {
-				log.Println("Successfully finished executing movement plan.")
-				return nil
-			}
-		}
-	}
-}
-
 // handleMovementPlans listens for and handles new movement plans. Only one plan can be executed
 // at once.
 func (m *Mover) handleMovementPlans() {
+	sp := &simpleSessionProvider{sessions: m.sessions}
 	for plan := range m.ch {
 		log.Printf("Received new movement plan: %v", plan)
-		if err := m.executeMovementPlan(plan); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(m.cfg.MovementDeadlineSeconds))
+		if err := plan.Execute(ctx, sp); err != nil {
 			log.Printf("Executing movement plan failed: %v", err)
 		}
+		cancel()
 	}
 }
 
