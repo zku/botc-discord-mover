@@ -51,15 +51,16 @@ func (p *movementPlan) Execute(ctx context.Context, sp sessionProvider) error {
 	results := make(chan error)
 	for i := 0; i < maxAsyncRequests; i++ {
 		go func() {
-			for name := range tasks {
-				results <- executeSingleMove(ctx, p.guild, name, p.moves[name], sp)
+			for user := range tasks {
+				results <- executeSingleMove(ctx, p.guild, user, p.moves[user], sp)
 			}
 		}()
 	}
 
 	var err error
-	for e := range results {
-		if e != nil {
+
+	for range p.moves {
+		if e := <-results; e != nil {
 			err = e
 		}
 	}
