@@ -346,7 +346,12 @@ func (m *Mover) RunForever() error {
 
 		m.sessions = append(m.sessions, dg)
 	}
-	log.Printf("Loaded %d discord session(s).", len(m.sessions))
+
+	if l := len(m.sessions); l == 0 {
+		return fmt.Errorf("no discord sessions loaded")
+	} else {
+		log.Printf("Loaded %d discord session(s).", l)
+	}
 
 	// Only session 1 will listen to commands from users. Other sessions
 	// only act according to session 1.
