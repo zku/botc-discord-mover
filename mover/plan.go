@@ -6,8 +6,6 @@ import (
 	"log"
 	"strings"
 	"time"
-
-	"github.com/bwmarrin/discordgo"
 )
 
 const (
@@ -35,14 +33,12 @@ func (p *movementPlan) String() string {
 	return fmt.Sprintf("Moving members of guild %s: %s", p.guild, strings.Join(parts, ", "))
 }
 
-type sessionProvider interface {
-	Next() *discordgo.Session
+type guildMemberMover interface {
+	Move(ctx context.Context, guild, user, channel string) error
 }
 
 // Execute executes all movements required to enter a new phase.
-// Movements are load-balanced across all configured bots provided by the session provider.
-// The whole phase transition must not take longer than the configured MovementDeadlineSeconds.
-func (p *movementPlan) Execute(ctx context.Context, cfg *Config, sp sessionProvider) error {
+func (p *movementPlan) Execute(ctx context.Context, cfg *Config, m guildMemberMover) error {
 	tasks := make(chan string, len(p.moves))
 	for user := range p.moves {
 		tasks <- user
@@ -52,7 +48,7 @@ func (p *movementPlan) Execute(ctx context.Context, cfg *Config, sp sessionProvi
 	for i := 0; i < cfg.MaxConcurrentRequests; i++ {
 		go func() {
 			for user := range tasks {
-				results <- executeSingleMove(ctx, p.guild, user, p.moves[user], sp)
+				results <- executeSingleMove(ctx, p.guild, user, p.moves[user], m)
 			}
 		}()
 	}
@@ -70,15 +66,13 @@ func (p *movementPlan) Execute(ctx context.Context, cfg *Config, sp sessionProvi
 	return err
 }
 
-func executeSingleMove(ctx context.Context, guild, user, channel string, sp sessionProvider) error {
+func executeSingleMove(ctx context.Context, guild, user, channel string, m guildMemberMover) error {
 	for i := 0; i < maxAttemptsPerUser; i++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			session := sp.Next()
-			log.Printf("Using session %s to move %s to %s (attempt %d).", session.State.User.Username, user, channel, i+1)
-			if err := session.GuildMemberMove(guild, user, &channel, discordgo.WithContext(ctx)); err != nil {
+			if err := m.Move(ctx, guild, user, channel); err != nil {
 				log.Printf("Attempt %d to move %s to %s failed: %v", i+1, user, channel, err)
 				time.Sleep(50 * time.Millisecond)
 			} else {
