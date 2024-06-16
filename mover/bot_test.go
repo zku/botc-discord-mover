@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/google/go-cmp/cmp"
 )
 
 type fakeDiscordSession struct {
-	id string
+	id               string
+	userToChannelMap map[string]string
 }
 
 func (f *fakeDiscordSession) GuildChannels(guildID string, options ...discordgo.RequestOption) ([]*discordgo.Channel, error) {
@@ -93,14 +95,75 @@ func TestUserIsStoryTeller(t *testing.T) {
 	}
 }
 
+type fakeMover struct {
+	*fakeDiscordSession
+}
+
+func (f *fakeMover) Move(ctx context.Context, guild, user, channel string) error {
+	if f.id != guild {
+		return fmt.Errorf("unknown guild: %v", guild)
+	}
+
+	if _, ok := f.userToChannelMap[user]; !ok {
+		return fmt.Errorf("unknown user: %v", user)
+	}
+
+	f.userToChannelMap[user] = channel
+	return nil
+}
+
+func TestExecuteMovementPlan(t *testing.T) {
+	m := New(&Config{
+		Tokens:                  []string{"a", "b", "c"},
+		NightPhaseCategory:      "nightphase",
+		DayPhaseCategory:        "dayphase",
+		TownSquare:              "townsquare",
+		StoryTellerRole:         "storyteller",
+		MovementDeadlineSeconds: 15,
+		PerRequestSeconds:       5,
+		MaxConcurrentRequests:   1,
+	})
+
+	d := &fakeDiscordSession{
+		id: "guild",
+		userToChannelMap: map[string]string{
+			"user1": "townsquare",
+			"user2": "townsquare",
+			"user3": "library",
+			"user4": "hotel",
+		},
+	}
+
+	plan := &movementPlan{
+		guild: d.id,
+		moves: map[string]string{
+			"user3": "townsquare",
+			"user4": "townsquare",
+		},
+	}
+
+	ctx := context.Background()
+	if err := plan.Execute(ctx, m.cfg, &fakeMover{d}); err != nil {
+		t.Fatalf("Cannot execute plan: %v", err)
+	}
+
+	want := map[string]string{
+		"user1": "townsquare",
+		"user2": "townsquare",
+		"user3": "townsquare",
+		"user4": "townsquare",
+	}
+
+	got := d.userToChannelMap
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("End state is not as expected (-want, +got):\n%s", diff)
+	}
+}
+
 func TestPrepareDayMoves(t *testing.T) {
 	t.Skip("TODO: Implement rest of discord session fake.")
 }
 
 func TestPrepareNightMoves(t *testing.T) {
-	t.Skip("TODO: Implement rest of discord session fake.")
-}
-
-func TestExecuteMovementPlan(t *testing.T) {
 	t.Skip("TODO: Implement rest of discord session fake.")
 }
