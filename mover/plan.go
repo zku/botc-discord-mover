@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"strings"
 	"time"
 )
@@ -48,7 +49,7 @@ func (p *movementPlan) Execute(ctx context.Context, cfg *Config, m guildMemberMo
 	for i := 0; i < cfg.MaxConcurrentRequests; i++ {
 		go func() {
 			for user := range tasks {
-				results <- executeSingleMove(ctx, p.guild, user, p.moves[user], m)
+				results <- executeSingleMove(ctx, p.guild, user, p.moves[user], len(p.moves), m)
 			}
 		}()
 	}
@@ -66,12 +67,16 @@ func (p *movementPlan) Execute(ctx context.Context, cfg *Config, m guildMemberMo
 	return err
 }
 
-func executeSingleMove(ctx context.Context, guild, user, channel string, m guildMemberMover) error {
+func executeSingleMove(ctx context.Context, guild, user, channel string, planSize int, m guildMemberMover) error {
 	for i := 0; i < maxAttemptsPerUser; i++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+			if i == 0 {
+				wait := (1000.0 / float64(planSize)) * rand.Float64()
+				time.Sleep(time.Duration(wait) * time.Millisecond)
+			}
 			if err := m.Move(ctx, guild, user, channel); err != nil {
 				log.Printf("Attempt %d to move %s to %s failed: %v", i+1, user, channel, err)
 				time.Sleep(50 * time.Millisecond)
