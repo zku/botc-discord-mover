@@ -97,7 +97,9 @@ func TestUserIsStoryTeller(t *testing.T) {
 
 type fakeMover struct {
 	*fakeDiscordSession
-	mu sync.Mutex
+	failures         map[string]int
+	numTotalFailures int
+	mu               sync.Mutex
 }
 
 func (f *fakeMover) Move(ctx context.Context, guild, user, channel string) error {
@@ -111,6 +113,13 @@ func (f *fakeMover) Move(ctx context.Context, guild, user, channel string) error
 
 	if _, ok := f.userToChannelMap[user]; !ok {
 		return fmt.Errorf("unknown user: %v", user)
+	}
+
+	// Emulate some move failures (e.g. http request times out).
+	if f.numTotalFailures < 10 && f.failures[user] < maxAttemptsPerUser-1 {
+		f.failures[user]++
+		f.numTotalFailures++
+		return fmt.Errorf("(expected test failure)")
 	}
 
 	f.userToChannelMap[user] = channel
@@ -153,8 +162,13 @@ func TestExecuteMovementPlan(t *testing.T) {
 		want[name] = "townsquare"
 	}
 
+	fm := &fakeMover{
+		fakeDiscordSession: d,
+		failures:           make(map[string]int),
+	}
+
 	ctx := context.Background()
-	if err := plan.Execute(ctx, m.cfg, &fakeMover{fakeDiscordSession: d}); err != nil {
+	if err := plan.Execute(ctx, m.cfg, fm); err != nil {
 		t.Fatalf("Cannot execute plan: %v", err)
 	}
 
