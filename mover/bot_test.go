@@ -3,6 +3,7 @@ package mover
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -96,12 +97,17 @@ func TestUserIsStoryTeller(t *testing.T) {
 
 type fakeMover struct {
 	*fakeDiscordSession
+	mu sync.Mutex
 }
 
 func (f *fakeMover) Move(ctx context.Context, guild, user, channel string) error {
 	if f.id != guild {
 		return fmt.Errorf("unknown guild: %v", guild)
 	}
+
+	// Not very performant, but this doesn't really matter for test code.
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	if _, ok := f.userToChannelMap[user]; !ok {
 		return fmt.Errorf("unknown user: %v", user)
@@ -120,7 +126,7 @@ func TestExecuteMovementPlan(t *testing.T) {
 		StoryTellerRole:         "storyteller",
 		MovementDeadlineSeconds: 15,
 		PerRequestSeconds:       5,
-		MaxConcurrentRequests:   1,
+		MaxConcurrentRequests:   3,
 	})
 
 	d := &fakeDiscordSession{
@@ -128,29 +134,28 @@ func TestExecuteMovementPlan(t *testing.T) {
 		userToChannelMap: map[string]string{
 			"user1": "townsquare",
 			"user2": "townsquare",
-			"user3": "library",
-			"user4": "hotel",
 		},
 	}
 
 	plan := &movementPlan{
 		guild: d.id,
-		moves: map[string]string{
-			"user3": "townsquare",
-			"user4": "townsquare",
-		},
-	}
-
-	ctx := context.Background()
-	if err := plan.Execute(ctx, m.cfg, &fakeMover{d}); err != nil {
-		t.Fatalf("Cannot execute plan: %v", err)
+		moves: map[string]string{},
 	}
 
 	want := map[string]string{
 		"user1": "townsquare",
 		"user2": "townsquare",
-		"user3": "townsquare",
-		"user4": "townsquare",
+	}
+	for i := 3; i < 10_000; i++ {
+		name := fmt.Sprintf("user%d", i)
+		d.userToChannelMap[name] = "somewhere"
+		plan.moves[name] = "townsquare"
+		want[name] = "townsquare"
+	}
+
+	ctx := context.Background()
+	if err := plan.Execute(ctx, m.cfg, &fakeMover{fakeDiscordSession: d}); err != nil {
+		t.Fatalf("Cannot execute plan: %v", err)
 	}
 
 	got := d.userToChannelMap
