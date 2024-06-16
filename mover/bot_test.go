@@ -44,7 +44,6 @@ func (f *fakeDiscordSession) GuildRoles(guildID string, options ...discordgo.Req
 }
 
 func TestUserIsStoryTeller(t *testing.T) {
-	// need helpers to create a fake discord guild & voice channel
 	m := New(&Config{
 		Tokens:                  []string{"a", "b", "c"},
 		NightPhaseCategory:      "nightphase",
