@@ -3,6 +3,7 @@ package mover
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -16,15 +17,51 @@ type fakeDiscordSession struct {
 }
 
 func (f *fakeDiscordSession) GuildChannels(guildID string, options ...discordgo.RequestOption) ([]*discordgo.Channel, error) {
-	return nil, nil
+	if f.id != guildID {
+		return nil, fmt.Errorf("unknown guild: %v", guildID)
+	}
+
+	return []*discordgo.Channel{
+		{Name: "day phase", ID: "day phase", ParentID: "root", Type: discordgo.ChannelTypeGuildCategory},
+		{Name: "townsquare", ID: "townsquare", ParentID: "day phase", Type: discordgo.ChannelTypeGuildVoice},
+		{Name: "inn", ID: "inn", ParentID: "day phase", Type: discordgo.ChannelTypeGuildVoice},
+		{Name: "hotel", ID: "hotel", ParentID: "day phase", Type: discordgo.ChannelTypeGuildVoice},
+		{Name: "barber", ID: "barber", ParentID: "day phase", Type: discordgo.ChannelTypeGuildVoice},
+		{Name: "night phase", ID: "night phase", ParentID: "root", Type: discordgo.ChannelTypeGuildCategory},
+		{Name: "cottage1", ID: "cottage1", ParentID: "night phase", Type: discordgo.ChannelTypeGuildVoice},
+		{Name: "cottage2", ID: "cottage2", ParentID: "night phase", Type: discordgo.ChannelTypeGuildVoice},
+		{Name: "cottage3", ID: "cottage3", ParentID: "night phase", Type: discordgo.ChannelTypeGuildVoice},
+		{Name: "cottage4", ID: "cottage4", ParentID: "night phase", Type: discordgo.ChannelTypeGuildVoice},
+		{Name: "cottage5", ID: "cottage5", ParentID: "night phase", Type: discordgo.ChannelTypeGuildVoice},
+	}, nil
 }
 
 func (f *fakeDiscordSession) StateGuild(guildID string) (*discordgo.Guild, error) {
-	return nil, nil
+	if f.id != guildID {
+		return nil, fmt.Errorf("unknown guild: %v", guildID)
+	}
+
+	return &discordgo.Guild{
+		VoiceStates: []*discordgo.VoiceState{
+			{UserID: "user1", ChannelID: "townsquare"},
+			{UserID: "user2", ChannelID: "inn"},
+			{UserID: "user3", ChannelID: "barber"},
+			{UserID: "storyteller", ChannelID: "barber"},
+		},
+	}, nil
 }
 
 func (f *fakeDiscordSession) GuildMembers(guildID string, after string, limit int, options ...discordgo.RequestOption) ([]*discordgo.Member, error) {
-	return nil, nil
+	if f.id != guildID {
+		return nil, fmt.Errorf("unknown guild: %v", guildID)
+	}
+
+	return []*discordgo.Member{
+		{User: &discordgo.User{ID: "user1"}},
+		{User: &discordgo.User{ID: "user2"}},
+		{User: &discordgo.User{ID: "user3"}},
+		{User: &discordgo.User{ID: "storyteller"}},
+	}, nil
 }
 
 func (f *fakeDiscordSession) InteractionRespond(interaction *discordgo.Interaction, resp *discordgo.InteractionResponse, options ...discordgo.RequestOption) error {
@@ -47,8 +84,8 @@ func (f *fakeDiscordSession) GuildRoles(guildID string, options ...discordgo.Req
 func TestUserIsStoryTeller(t *testing.T) {
 	m := New(&Config{
 		Tokens:                  []string{"a", "b", "c"},
-		NightPhaseCategory:      "nightphase",
-		DayPhaseCategory:        "dayphase",
+		NightPhaseCategory:      "night phase",
+		DayPhaseCategory:        "day phase",
 		TownSquare:              "townsquare",
 		StoryTellerRole:         "storyteller",
 		MovementDeadlineSeconds: 15,
@@ -129,8 +166,8 @@ func (f *fakeMover) Move(ctx context.Context, guild, user, channel string) error
 func TestExecuteMovementPlan(t *testing.T) {
 	m := New(&Config{
 		Tokens:                  []string{"a", "b", "c"},
-		NightPhaseCategory:      "nightphase",
-		DayPhaseCategory:        "dayphase",
+		NightPhaseCategory:      "night phase",
+		DayPhaseCategory:        "day phase",
 		TownSquare:              "townsquare",
 		StoryTellerRole:         "storyteller",
 		MovementDeadlineSeconds: 15,
@@ -179,9 +216,93 @@ func TestExecuteMovementPlan(t *testing.T) {
 }
 
 func TestPrepareDayMoves(t *testing.T) {
-	t.Skip("TODO: Implement rest of discord session fake.")
+	m := &Mover{
+		ch: make(chan *movementPlan, 1),
+		cfg: &Config{
+			Tokens:                  []string{"a", "b", "c"},
+			NightPhaseCategory:      "night phase",
+			DayPhaseCategory:        "day phase",
+			TownSquare:              "townsquare",
+			StoryTellerRole:         "storyteller",
+			MovementDeadlineSeconds: 15,
+			PerRequestSeconds:       5,
+			MaxConcurrentRequests:   3,
+		},
+	}
+
+	d := &fakeDiscordSession{
+		id: "guild",
+	}
+
+	ctx := context.Background()
+	i := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			GuildID: "guild",
+		},
+	}
+
+	if err := m.prepareDayMoves(ctx, d, i); err != nil {
+		t.Fatalf("Cannot prepare day moves: %v", err)
+	}
+
+	want := map[string]string{
+		"user2":       "townsquare",
+		"user3":       "townsquare",
+		"storyteller": "townsquare",
+	}
+
+	select {
+	case plan := <-m.ch:
+		got := plan.moves
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("Movement plan mismatch (-want, +got):%s\n", diff)
+		}
+	default:
+		t.Fatal("Expected to receive plan, got nothing.")
+	}
 }
 
 func TestPrepareNightMoves(t *testing.T) {
-	t.Skip("TODO: Implement rest of discord session fake.")
+	m := &Mover{
+		ch: make(chan *movementPlan, 1),
+		cfg: &Config{
+			Tokens:                  []string{"a", "b", "c"},
+			NightPhaseCategory:      "night phase",
+			DayPhaseCategory:        "day phase",
+			TownSquare:              "townsquare",
+			StoryTellerRole:         "storyteller",
+			MovementDeadlineSeconds: 15,
+			PerRequestSeconds:       5,
+			MaxConcurrentRequests:   3,
+		},
+	}
+
+	d := &fakeDiscordSession{
+		id: "guild",
+	}
+
+	ctx := context.Background()
+	i := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			GuildID: "guild",
+		},
+	}
+
+	if err := m.prepareNightMoves(ctx, d, i); err != nil {
+		t.Fatalf("Cannot prepare day moves: %v", err)
+	}
+
+	select {
+	case plan := <-m.ch:
+		if len(plan.moves) != 4 {
+			t.Fatalf("Expected 4 movements, got %#v", plan.moves)
+		}
+		for user, channel := range plan.moves {
+			if !strings.HasPrefix(channel, "cottage") {
+				t.Fatalf("Expected all players to move to cottages, received move %s -> %s instead", user, channel)
+			}
+		}
+	default:
+		t.Fatal("Expected to receive plan, got nothing.")
+	}
 }
