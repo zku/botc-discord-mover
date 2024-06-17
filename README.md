@@ -6,6 +6,6 @@ Simple self-hosted Discord bot to facilitate moving players to the Townsquare an
 
 TODO
 
-# Running the bot
+# Running the Bot
 
 TODO

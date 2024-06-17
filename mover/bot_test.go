@@ -145,6 +145,7 @@ func (f *fakeMover) Move(ctx context.Context, guild, user, channel string) error
 	}
 
 	// Not very performant, but this doesn't really matter for test code.
+	// The real mover is much slower since it issues HTTPS requests, so this is fine.
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
