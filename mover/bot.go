@@ -12,8 +12,8 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// Mover is a BotC multi-bot voice channel mover.
-type Mover struct {
+// Bot is a BotC multi-bot voice channel mover.
+type Bot struct {
 	cfg      *Config
 	sessions []*discordgo.Session
 	ch       chan (*movementPlan)
@@ -23,8 +23,8 @@ type Mover struct {
 // Supports moving users to individual cottages (night phases) and to Town Square (day phase).
 // Actions are load-balanced across all configured bots in an attempt to reduce Discord
 // throttling issues for large games (>10 players).
-func New(cfg *Config) *Mover {
-	return &Mover{cfg: cfg, ch: make(chan (*movementPlan))}
+func New(cfg *Config) *Bot {
+	return &Bot{cfg: cfg, ch: make(chan (*movementPlan))}
 }
 
 // Button IDs.
@@ -34,12 +34,12 @@ const (
 )
 
 // onButtonPressed handles the 2 button presses for day/night phase movements.
-func (m *Mover) onButtonPressed(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) error {
+func (b *Bot) onButtonPressed(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	switch i.MessageComponentData().CustomID {
 	case buttonNight:
-		return m.prepareNightMoves(ctx, &discordSessionWrap{s}, i)
+		return b.prepareNightMoves(ctx, &discordSessionWrap{s}, i)
 	case buttonDay:
-		return m.prepareDayMoves(ctx, &discordSessionWrap{s}, i)
+		return b.prepareDayMoves(ctx, &discordSessionWrap{s}, i)
 	}
 
 	return fmt.Errorf("unknown button pressed: %#v", i.MessageComponentData())
@@ -51,7 +51,7 @@ const (
 )
 
 // onSlashCommand handles the /buttons slash command and responds with the 2 button embeds.
-func (m *Mover) onSlashCommand(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) error {
+func (b *Bot) onSlashCommand(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	data := i.ApplicationCommandData()
 	if data.Name != slashCommandButtons {
 		return fmt.Errorf("unknown slash command: %s", data.Name)
@@ -117,7 +117,7 @@ type discordSession interface {
 
 // buildDiscordVoiceState returns information about all mandatory voice channels and members in
 // voice channels.
-func (m *Mover) buildDiscordVoiceState(ctx context.Context, s discordSession, guildID string) (*discordVoiceState, error) {
+func (b *Bot) buildDiscordVoiceState(ctx context.Context, s discordSession, guildID string) (*discordVoiceState, error) {
 	channels, err := s.GuildChannels(guildID, discordgo.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("cannot list guild channels: %w", err)
@@ -126,23 +126,23 @@ func (m *Mover) buildDiscordVoiceState(ctx context.Context, s discordSession, gu
 	var dayCategoryChannel, nightCategoryChannel, townSquareChannel *discordgo.Channel
 	for _, channel := range channels {
 		switch channel.Name {
-		case m.cfg.DayPhaseCategory:
+		case b.cfg.DayPhaseCategory:
 			dayCategoryChannel = channel
-		case m.cfg.NightPhaseCategory:
+		case b.cfg.NightPhaseCategory:
 			nightCategoryChannel = channel
-		case m.cfg.TownSquare:
+		case b.cfg.TownSquare:
 			townSquareChannel = channel
 		}
 	}
 
 	if dayCategoryChannel == nil {
-		return nil, fmt.Errorf("cannot find day category %q", m.cfg.DayPhaseCategory)
+		return nil, fmt.Errorf("cannot find day category %q", b.cfg.DayPhaseCategory)
 	}
 	if nightCategoryChannel == nil {
-		return nil, fmt.Errorf("cannot find night category %q", m.cfg.NightPhaseCategory)
+		return nil, fmt.Errorf("cannot find night category %q", b.cfg.NightPhaseCategory)
 	}
 	if townSquareChannel == nil {
-		return nil, fmt.Errorf("cannot find Town Square %q", m.cfg.TownSquare)
+		return nil, fmt.Errorf("cannot find Town Square %q", b.cfg.TownSquare)
 	}
 	if townSquareChannel.ParentID != dayCategoryChannel.ID {
 		return nil, fmt.Errorf("town square is not under day phase")
@@ -196,10 +196,10 @@ func forwardInteractionError(s *discordgo.Session, i *discordgo.InteractionCreat
 }
 
 // prepareNightMoves prepares all necessary moves for the night phase and dispatches the plan.
-func (m *Mover) prepareNightMoves(ctx context.Context, s discordSession, i *discordgo.InteractionCreate) error {
+func (b *Bot) prepareNightMoves(ctx context.Context, s discordSession, i *discordgo.InteractionCreate) error {
 	log.Println("Moving to night.")
 
-	vs, err := m.buildDiscordVoiceState(ctx, s, i.GuildID)
+	vs, err := b.buildDiscordVoiceState(ctx, s, i.GuildID)
 	if err != nil {
 		return fmt.Errorf("cannot build voice state: %w", err)
 	}
@@ -250,7 +250,7 @@ func (m *Mover) prepareNightMoves(ctx context.Context, s discordSession, i *disc
 	}
 
 	select {
-	case m.ch <- &movementPlan{moves: plan, guild: i.GuildID}:
+	case b.ch <- &movementPlan{moves: plan, guild: i.GuildID}:
 		return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseDeferredMessageUpdate,
 			Data: &discordgo.InteractionResponseData{
@@ -265,10 +265,10 @@ func (m *Mover) prepareNightMoves(ctx context.Context, s discordSession, i *disc
 }
 
 // prepareDayMoves prepares all necessary moves for the day phase and dispatches the plan.
-func (m *Mover) prepareDayMoves(ctx context.Context, s discordSession, i *discordgo.InteractionCreate) error {
+func (b *Bot) prepareDayMoves(ctx context.Context, s discordSession, i *discordgo.InteractionCreate) error {
 	log.Println("Moving to day.")
 
-	vs, err := m.buildDiscordVoiceState(ctx, s, i.GuildID)
+	vs, err := b.buildDiscordVoiceState(ctx, s, i.GuildID)
 	if err != nil {
 		return fmt.Errorf("cannot build voice state: %w", err)
 	}
@@ -289,7 +289,7 @@ func (m *Mover) prepareDayMoves(ctx context.Context, s discordSession, i *discor
 	}
 
 	select {
-	case m.ch <- &movementPlan{moves: plan, guild: i.GuildID}:
+	case b.ch <- &movementPlan{moves: plan, guild: i.GuildID}:
 		return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseDeferredMessageUpdate,
 			Data: &discordgo.InteractionResponseData{
@@ -303,7 +303,7 @@ func (m *Mover) prepareDayMoves(ctx context.Context, s discordSession, i *discor
 
 // checkUserIsStoryTeller returns an error iff the interaction user is not a story teller or if the
 // command was not invoked in a guild channel.
-func (m *Mover) checkUserIsStoryTeller(ctx context.Context, s discordSession, i *discordgo.InteractionCreate) error {
+func (b *Bot) checkUserIsStoryTeller(ctx context.Context, s discordSession, i *discordgo.InteractionCreate) error {
 	if i.Member == nil {
 		return fmt.Errorf("action not invoked from guild channel")
 	}
@@ -320,7 +320,7 @@ func (m *Mover) checkUserIsStoryTeller(ctx context.Context, s discordSession, i 
 
 	// User must be a story teller.
 	for _, role := range i.Member.Roles {
-		if m.cfg.StoryTellerRole == roleToName[role] {
+		if b.cfg.StoryTellerRole == roleToName[role] {
 			// Found it.
 			return nil
 		}
@@ -331,12 +331,12 @@ func (m *Mover) checkUserIsStoryTeller(ctx context.Context, s discordSession, i 
 
 // handleMovementPlans listens for and handles new movement plans. Only one plan can be executed
 // at once.
-func (m *Mover) handleMovementPlans() {
-	sm := &simpleGuildMemberMover{sessions: m.sessions}
-	for plan := range m.ch {
+func (b *Bot) handleMovementPlans() {
+	sm := &simpleGuildMemberMover{sessions: b.sessions}
+	for plan := range b.ch {
 		log.Printf("Received new movement plan: %v", plan)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(m.cfg.MovementDeadlineSeconds))
-		if err := plan.Execute(ctx, m.cfg, sm); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(b.cfg.MovementDeadlineSeconds))
+		if err := plan.Execute(ctx, b.cfg, sm); err != nil {
 			log.Printf("Executing movement plan failed: %v", err)
 		} else {
 			log.Printf("Successfully finished movement plan.")
@@ -347,9 +347,9 @@ func (m *Mover) handleMovementPlans() {
 
 // RunForever establishes all bot sessions and listens for commands until the program is
 // terminated.
-func (m *Mover) RunForever() error {
+func (b *Bot) RunForever() error {
 	// Establish all bot sessions.
-	for _, token := range m.cfg.Tokens {
+	for _, token := range b.cfg.Tokens {
 		dg, err := discordgo.New("Bot " + token)
 		if err != nil {
 			return fmt.Errorf("cannot create discordgo session: %w", err)
@@ -361,10 +361,10 @@ func (m *Mover) RunForever() error {
 			return fmt.Errorf("cannot open session: %w", err)
 		}
 
-		m.sessions = append(m.sessions, dg)
+		b.sessions = append(b.sessions, dg)
 	}
 
-	if l := len(m.sessions); l == 0 {
+	if l := len(b.sessions); l == 0 {
 		return fmt.Errorf("no discord sessions loaded")
 	} else {
 		log.Printf("Loaded %d discord session(s).", l)
@@ -374,22 +374,22 @@ func (m *Mover) RunForever() error {
 	// only act according to session 1.
 
 	// Create the /buttons slash command.
-	if _, err := m.sessions[0].ApplicationCommandCreate(m.sessions[0].State.User.ID, "", &discordgo.ApplicationCommand{
+	if _, err := b.sessions[0].ApplicationCommandCreate(b.sessions[0].State.User.ID, "", &discordgo.ApplicationCommand{
 		Name:        "buttons",
 		Description: "Show day/night action buttons.",
 	}); err != nil {
 		return fmt.Errorf("cannot create application command: %w", err)
 	}
 
-	defer close(m.ch)
-	go m.handleMovementPlans()
+	defer close(b.ch)
+	go b.handleMovementPlans()
 
 	// Listen for commands.
-	m.sessions[0].AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.cfg.PerRequestSeconds)*time.Second)
+	b.sessions[0].AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(b.cfg.PerRequestSeconds)*time.Second)
 		defer cancel()
 
-		if err := m.checkUserIsStoryTeller(ctx, &discordSessionWrap{s}, i); err != nil {
+		if err := b.checkUserIsStoryTeller(ctx, &discordSessionWrap{s}, i); err != nil {
 			log.Printf("Invalid user: %v", err)
 			return
 		}
@@ -399,13 +399,13 @@ func (m *Mover) RunForever() error {
 		switch i.Type {
 		case discordgo.InteractionMessageComponent:
 			// Handle button press.
-			if err := m.onButtonPressed(ctx, s, i); err != nil {
+			if err := b.onButtonPressed(ctx, s, i); err != nil {
 				forwardInteractionError(s, i, err)
 				return
 			}
 		case discordgo.InteractionApplicationCommand:
 			// Handle slash command.
-			if err := m.onSlashCommand(ctx, s, i); err != nil {
+			if err := b.onSlashCommand(ctx, s, i); err != nil {
 				forwardInteractionError(s, i, err)
 				return
 			}

@@ -164,7 +164,7 @@ func (f *fakeMover) Move(ctx context.Context, guild, user, channel string) error
 }
 
 func TestExecuteMovementPlan(t *testing.T) {
-	m := New(&Config{
+	cfg := &Config{
 		Tokens:                  []string{"a", "b", "c"},
 		NightPhaseCategory:      "night phase",
 		DayPhaseCategory:        "day phase",
@@ -173,10 +173,9 @@ func TestExecuteMovementPlan(t *testing.T) {
 		MovementDeadlineSeconds: 15,
 		PerRequestSeconds:       5,
 		MaxConcurrentRequests:   3,
-	})
+	}
 
 	d := &fakeDiscordSession{
-		id: "guild",
 		userToChannelMap: map[string]string{
 			"user1": "townsquare",
 			"user2": "townsquare",
@@ -205,7 +204,7 @@ func TestExecuteMovementPlan(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := plan.Execute(ctx, m.cfg, fm); err != nil {
+	if err := plan.Execute(ctx, cfg, fm); err != nil {
 		t.Fatalf("Cannot execute plan: %v", err)
 	}
 
@@ -216,7 +215,7 @@ func TestExecuteMovementPlan(t *testing.T) {
 }
 
 func TestPrepareDayMoves(t *testing.T) {
-	m := &Mover{
+	b := &Bot{
 		ch: make(chan *movementPlan, 1),
 		cfg: &Config{
 			Tokens:                  []string{"a", "b", "c"},
@@ -241,7 +240,7 @@ func TestPrepareDayMoves(t *testing.T) {
 		},
 	}
 
-	if err := m.prepareDayMoves(ctx, d, i); err != nil {
+	if err := b.prepareDayMoves(ctx, d, i); err != nil {
 		t.Fatalf("Cannot prepare day moves: %v", err)
 	}
 
@@ -252,7 +251,7 @@ func TestPrepareDayMoves(t *testing.T) {
 	}
 
 	select {
-	case plan := <-m.ch:
+	case plan := <-b.ch:
 		got := plan.moves
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Fatalf("Movement plan mismatch (-want, +got):%s\n", diff)
@@ -263,7 +262,7 @@ func TestPrepareDayMoves(t *testing.T) {
 }
 
 func TestPrepareNightMoves(t *testing.T) {
-	m := &Mover{
+	b := &Bot{
 		ch: make(chan *movementPlan, 1),
 		cfg: &Config{
 			Tokens:                  []string{"a", "b", "c"},
@@ -288,12 +287,12 @@ func TestPrepareNightMoves(t *testing.T) {
 		},
 	}
 
-	if err := m.prepareNightMoves(ctx, d, i); err != nil {
+	if err := b.prepareNightMoves(ctx, d, i); err != nil {
 		t.Fatalf("Cannot prepare day moves: %v", err)
 	}
 
 	select {
-	case plan := <-m.ch:
+	case plan := <-b.ch:
 		if len(plan.moves) != 4 {
 			t.Fatalf("Expected 4 movements, got %#v", plan.moves)
 		}
