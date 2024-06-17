@@ -15,15 +15,23 @@ var configPath = flag.String("config", ".config.json", "Path to config file (jso
 func main() {
 	flag.Parse()
 
-	// Load config.
-	configData, err := ioutil.ReadFile(*configPath)
-	if err != nil {
-		log.Fatalf("Cannot load config file %q: %v", *configPath, err)
-	}
 	cfg := &mover.Config{}
-	if err := json.Unmarshal(configData, cfg); err != nil {
-		log.Fatalf("Cannot parse config: %v", err)
+	if *configPath != "" {
+		contents, err := ioutil.ReadFile(*configPath)
+		if err != nil {
+			log.Fatalf("Cannot load config file %q: %v", *configPath, err)
+		}
+		if err := json.Unmarshal(contents, cfg); err != nil {
+			log.Fatalf("Cannot parse config: %v", err)
+		}
+	} else {
+		var err error
+		cfg, err = mover.ConfigFromEnv()
+		if err != nil {
+			log.Fatalf("Cannot load config from environment variables: %v", err)
+		}
 	}
+
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Incomplete config: %v", err)
 	}

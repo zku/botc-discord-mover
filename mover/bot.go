@@ -332,11 +332,11 @@ func (b *Bot) checkUserIsStoryTeller(ctx context.Context, s discordSession, i *d
 // handleMovementPlans listens for and handles new movement plans. Only one plan can be executed
 // at once.
 func (b *Bot) handleMovementPlans() {
-	sm := &simpleGuildMemberMover{sessions: b.sessions}
+	m := &simpleGuildMemberMover{sessions: b.sessions}
 	for plan := range b.ch {
 		log.Printf("Received new movement plan: %v", plan)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(b.cfg.MovementDeadlineSeconds))
-		if err := plan.Execute(ctx, b.cfg, sm); err != nil {
+		if err := plan.Execute(ctx, b.cfg, m); err != nil {
 			log.Printf("Executing movement plan failed: %v", err)
 		} else {
 			log.Printf("Successfully finished movement plan.")
