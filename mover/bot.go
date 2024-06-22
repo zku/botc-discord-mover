@@ -218,7 +218,8 @@ func (b *Bot) prepareNightMoves(ctx context.Context, s discordSession, i *discor
 		userVoiceState := vs.userToVoiceState[member.User.ID]
 		if userVoiceState != nil && userVoiceState.ChannelID != "" {
 			// This member is in a voice channel.
-			// If they are in a cottage, we have to mark it as full already. (Should rarely happen?)
+			// If they are in a cottage, we have to mark it as full already.
+			// This only happens if a new player joins during the night phase.
 			if nightCottageChannelIDs[userVoiceState.ChannelID] {
 				fullCottageIDs[userVoiceState.ChannelID] = true
 			} else {
