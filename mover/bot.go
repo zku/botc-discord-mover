@@ -303,13 +303,13 @@ func (b *Bot) prepareDayMoves(ctx context.Context, s discordSession, i *discordg
 
 // checkUserIsStoryTeller returns an error iff the interaction user is not a story teller or if the
 // command was not invoked in a guild channel.
-func (b *Bot) checkUserIsStoryTeller(ctx context.Context, s discordSession, i *discordgo.InteractionCreate) error {
-	if i.Member == nil {
+func (b *Bot) checkUserIsStoryTeller(ctx context.Context, s discordSession, guildID string, member *discordgo.Member) error {
+	if member == nil {
 		return fmt.Errorf("action not invoked from guild channel")
 	}
 
 	// Fetch all guild roles.
-	allRoles, err := s.GuildRoles(i.GuildID, discordgo.WithContext(ctx))
+	allRoles, err := s.GuildRoles(guildID, discordgo.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("cannot fetch guild roles: %w", err)
 	}
@@ -319,14 +319,14 @@ func (b *Bot) checkUserIsStoryTeller(ctx context.Context, s discordSession, i *d
 	}
 
 	// User must be a story teller.
-	for _, roleID := range i.Member.Roles {
+	for _, roleID := range member.Roles {
 		if b.cfg.StoryTellerRole == roleIDToName[roleID] {
 			// Found it.
 			return nil
 		}
 	}
 
-	return fmt.Errorf("user %v (%v) is not a story teller", i.Member.User.Username, i.Member.DisplayName())
+	return fmt.Errorf("user %v (%v) is not a story teller", member.User.Username, member.DisplayName())
 }
 
 // handleMovementPlans listens for and handles new movement plans. Only one plan can be executed
@@ -389,7 +389,7 @@ func (b *Bot) RunForever() error {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(b.cfg.PerRequestSeconds)*time.Second)
 		defer cancel()
 
-		if err := b.checkUserIsStoryTeller(ctx, &discordSessionWrap{s}, i); err != nil {
+		if err := b.checkUserIsStoryTeller(ctx, &discordSessionWrap{s}, i.GuildID, i.Member); err != nil {
 			log.Printf("Invalid user: %v", err)
 			return
 		}

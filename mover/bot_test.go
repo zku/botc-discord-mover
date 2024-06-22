@@ -125,7 +125,7 @@ func TestUserIsStoryTeller(t *testing.T) {
 				},
 			},
 		}
-		if err := m.checkUserIsStoryTeller(ctx, d, i); (err != nil) != tc.wantErr {
+		if err := m.checkUserIsStoryTeller(ctx, d, i.GuildID, i.Member); (err != nil) != tc.wantErr {
 			t.Errorf("checkUserIsStoryTeller() returned unexpected error %v, want error: %t", err, tc.wantErr)
 		}
 	}
