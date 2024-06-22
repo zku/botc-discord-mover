@@ -160,11 +160,10 @@ func (b *Bot) buildDiscordVoiceState(ctx context.Context, s discordSession, guil
 		}
 	}
 
-	// Reverse the cottage order so we populate the top-most ones. This will make it easier for the
-	// storyteller to see all the populated cottages.
-	for i, j := 0, len(cottages)-1; i < j; i, j = i+1, j-1 {
-		cottages[i], cottages[j] = cottages[j], cottages[i]
-	}
+	// Sort the cottages according to their position and use the top N cottages.
+	slices.SortFunc(cottages, func(a, b *discordgo.Channel) int {
+		return a.Position - b.Position
+	})
 
 	guild, err := s.StateGuild(guildID)
 	if err != nil {
