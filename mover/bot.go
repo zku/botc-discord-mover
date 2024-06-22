@@ -313,14 +313,14 @@ func (b *Bot) checkUserIsStoryTeller(ctx context.Context, s discordSession, i *d
 	if err != nil {
 		return fmt.Errorf("cannot fetch guild roles: %w", err)
 	}
-	roleToName := make(map[string]string)
+	roleIDToName := make(map[string]string)
 	for _, role := range allRoles {
-		roleToName[role.ID] = role.Name
+		roleIDToName[role.ID] = role.Name
 	}
 
 	// User must be a story teller.
-	for _, role := range i.Member.Roles {
-		if b.cfg.StoryTellerRole == roleToName[role] {
+	for _, roleID := range i.Member.Roles {
+		if b.cfg.StoryTellerRole == roleIDToName[roleID] {
 			// Found it.
 			return nil
 		}
