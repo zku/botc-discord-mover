@@ -99,15 +99,19 @@ type discordVoiceState struct {
 	cottages         []*discordgo.Channel
 }
 
+// discordSessionWrap wraps a discordgo session to simplify unit testing.
 type discordSessionWrap struct {
 	*discordgo.Session
 }
 
-// StateGuild implements the session's State.Guild().
+// StateGuild implements the session's State.Guild(). session.Guild() and session.State.Guild()
+// have different semantics, and we unfortunately need to use the State's Guild() call for the
+// voice channel information.
 func (s *discordSessionWrap) StateGuild(guildID string) (*discordgo.Guild, error) {
 	return s.State.Guild(guildID)
 }
 
+// discordSession interface used by the bot. Can be exchanged for a fake in unit tests.
 type discordSession interface {
 	GuildChannels(guildID string, options ...discordgo.RequestOption) ([]*discordgo.Channel, error)
 	StateGuild(guildID string) (*discordgo.Guild, error)
