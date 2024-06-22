@@ -46,6 +46,7 @@ func (f *fakeDiscordSession) StateGuild(guildID string) (*discordgo.Guild, error
 			{UserID: "user2", ChannelID: "inn"},
 			{UserID: "user3", ChannelID: "barber"},
 			{UserID: "storyteller", ChannelID: "barber"},
+			{UserID: "storyteller2", ChannelID: "library"},
 		},
 	}, nil
 }
@@ -56,10 +57,11 @@ func (f *fakeDiscordSession) GuildMembers(guildID string, after string, limit in
 	}
 
 	return []*discordgo.Member{
-		{User: &discordgo.User{ID: "user1"}},
-		{User: &discordgo.User{ID: "user2"}},
-		{User: &discordgo.User{ID: "user3"}},
-		{User: &discordgo.User{ID: "storyteller"}},
+		{User: &discordgo.User{ID: "user1"}, Roles: []string{"role1"}},
+		{User: &discordgo.User{ID: "user2"}, Roles: []string{"role1"}},
+		{User: &discordgo.User{ID: "user3"}, Roles: []string{"role1"}},
+		{User: &discordgo.User{ID: "storyteller"}, Roles: []string{"role1", "storyteller"}},
+		{User: &discordgo.User{ID: "storyteller2"}, Roles: []string{"role1", "storyteller"}},
 	}, nil
 }
 
@@ -162,9 +164,10 @@ func TestPrepareDayMoves(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"user2":       "townsquare",
-		"user3":       "townsquare",
-		"storyteller": "townsquare",
+		"user2":        "townsquare",
+		"user3":        "townsquare",
+		"storyteller":  "townsquare",
+		"storyteller2": "townsquare",
 	}
 
 	select {
@@ -210,14 +213,36 @@ func TestPrepareNightMoves(t *testing.T) {
 
 	select {
 	case plan := <-b.ch:
-		if len(plan.moves) != 4 {
-			t.Fatalf("Expected 4 movements, got %#v", plan.moves)
+		t.Logf("Movement plan: %#v", plan.moves)
+		if len(plan.moves) != 5 {
+			t.Fatalf("Expected 5 movements, got %#v", plan.moves)
 		}
+
+		var storyTellerCottageID string
+		fullCottageIDs := make(map[string]bool)
 		for user, channel := range plan.moves {
 			if !strings.HasPrefix(channel, "cottage") {
 				t.Fatalf("Expected all players to move to cottages, received move %s -> %s instead", user, channel)
 			}
+			if strings.HasPrefix(user, "storyteller") {
+				if storyTellerCottageID == "" {
+					storyTellerCottageID = channel
+				} else {
+					// Check that all STs are in the same cottage. The only time this would not happen is if
+					// multiple STs are already in different cottages during the night when a new night move
+					// is initiated.
+					if channel != storyTellerCottageID {
+						t.Fatalf("Expected story teller %s to be in the story teller cottage %s, but instead is moved to %s", user, storyTellerCottageID, channel)
+					}
+				}
+			} else {
+				if fullCottageIDs[channel] {
+					t.Fatalf("Attempted to move 2 non-story tellers to the same cottage %s", channel)
+				}
+				fullCottageIDs[channel] = true
+			}
 		}
+
 	default:
 		t.Fatal("Expected to receive plan, got nothing.")
 	}

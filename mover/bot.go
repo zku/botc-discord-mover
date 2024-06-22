@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"golang.org/x/exp/slices"
 )
 
 // Bot is a BotC multi-bot voice channel mover.
@@ -212,8 +213,9 @@ func (b *Bot) prepareNightMoves(ctx context.Context, s discordSession, i *discor
 	}
 
 	// Anyone who isn't already in a private night time cottage needs to move.
+	var storyTellerCottageID string
 	fullCottageIDs := make(map[string]bool)
-	var userNeedsMove []string
+	var userNeedsMove []*discordgo.Member
 	for _, member := range vs.members {
 		userVoiceState := vs.userToVoiceState[member.User.ID]
 		if userVoiceState != nil && userVoiceState.ChannelID != "" {
@@ -222,9 +224,12 @@ func (b *Bot) prepareNightMoves(ctx context.Context, s discordSession, i *discor
 			// This only happens if a new player joins during the night phase.
 			if nightCottageChannelIDs[userVoiceState.ChannelID] {
 				fullCottageIDs[userVoiceState.ChannelID] = true
+				if storyTellerCottageID == "" && member.User.ID == i.Member.User.ID {
+					storyTellerCottageID = userVoiceState.ChannelID
+				}
 			} else {
 				// Otherwise, they need to move.
-				userNeedsMove = append(userNeedsMove, member.User.ID)
+				userNeedsMove = append(userNeedsMove, member)
 			}
 		}
 	}
@@ -233,15 +238,40 @@ func (b *Bot) prepareNightMoves(ctx context.Context, s discordSession, i *discor
 		return fmt.Errorf("not enough cottages available, need %d user movements but only have %d empty cottages", len(userNeedsMove), len(nightCottageChannelIDs)-len(fullCottageIDs))
 	}
 
+	// Find the story teller role ID.
+	allRoles, err := s.GuildRoles(i.GuildID, discordgo.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("cannot fetch guild roles: %w", err)
+	}
+	var storyTellerRoleID string
+	for _, role := range allRoles {
+		if role.Name == b.cfg.StoryTellerRole {
+			storyTellerRoleID = role.ID
+			break
+		}
+	}
+	if storyTellerRoleID == "" {
+		return fmt.Errorf("cannot determine story teller role ID for name %s", b.cfg.StoryTellerRole)
+	}
+
 	// Build the movement plan.
 	plan := make(map[string]string)
-	for _, user := range userNeedsMove {
+	for _, member := range userNeedsMove {
+		isStoryTeller := slices.Contains(member.Roles, storyTellerRoleID)
+		if isStoryTeller && storyTellerCottageID != "" {
+			// Move story tellers into the same cottage at night.
+			plan[member.User.ID] = storyTellerCottageID
+			continue
+		}
 		for _, cottage := range vs.cottages {
 			if fullCottageIDs[cottage.ID] {
 				continue // This cottage is already full.
 			}
-			plan[user] = cottage.ID
+			plan[member.User.ID] = cottage.ID
 			fullCottageIDs[cottage.ID] = true
+			if isStoryTeller {
+				storyTellerCottageID = cottage.ID
+			}
 			break
 		}
 	}
@@ -314,17 +344,22 @@ func (b *Bot) checkUserIsStoryTeller(ctx context.Context, s discordSession, guil
 	if err != nil {
 		return fmt.Errorf("cannot fetch guild roles: %w", err)
 	}
-	roleIDToName := make(map[string]string)
+
+	var storyTellerRoleID string
 	for _, role := range allRoles {
-		roleIDToName[role.ID] = role.Name
+		if role.Name == b.cfg.StoryTellerRole {
+			storyTellerRoleID = role.ID
+			break
+		}
 	}
 
-	// User must be a story teller.
-	for _, roleID := range member.Roles {
-		if b.cfg.StoryTellerRole == roleIDToName[roleID] {
-			// Found it.
-			return nil
-		}
+	if storyTellerRoleID == "" {
+		return fmt.Errorf("cannot find story teller role %s among %#v", b.cfg.StoryTellerRole, allRoles)
+	}
+
+	if slices.Contains(member.Roles, storyTellerRoleID) {
+		// User is a story teller.
+		return nil
 	}
 
 	return fmt.Errorf("user %v (%v) is not a story teller", member.User.Username, member.DisplayName())
