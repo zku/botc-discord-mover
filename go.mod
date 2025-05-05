@@ -1,6 +1,6 @@
 module github.com/zku/botc-discord-mover
 
-go 1.20
+go 1.24.2
 
 require (
 	github.com/bwmarrin/discordgo v0.28.1
